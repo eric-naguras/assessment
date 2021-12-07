@@ -3,7 +3,7 @@ import fs from 'fs'
 import { readFile } from './fileReader.js'
 import { Queue } from './queue.js'
 import { sendOrder } from './orderSender.js'
-const orderFilesPath = path.resolve('./assessment')
+const orderFilesPath = path.resolve('./files-source')
 const newQueuesInterval = 250 // time in ms
 const fileReadInterval = 30000 // time in ms
 let hrstart
@@ -26,7 +26,7 @@ const readAFile = (file) => {
           ordersToBeProcessed.enqueue(order)
         }
         // Move file to other directory
-        const dest = file.replace('assessment', 'done')
+        const dest = file.replace('files-source', 'done')
         fs.renameSync(file, dest)
         return resolve()
       })
@@ -45,17 +45,22 @@ const processOrderQueue = () => {
     const orderKey = order.Key
     delete order.Key
     // Send the order to the endpoint without waiting for a response
+    let orderSendStart = process.hrtime()
     sendOrder(order, orderKey)
       .then((response) => {
+        const orderSendEnd = process.hrtime(orderSendStart)
         // This is just for timing purposes
         if (response.orderSentCounter === 3000) {
           const hrend = process.hrtime(hrstart)
           console.info('Execution time (hr): %ds %dms', hrend[0], hrend[1] / 1000000)
         }
+
         console.log(
           `${ordersToBeProcessed.length()} Queue handler sent order ${
             response.orderKey
-          } successfuly. Total orders sent: ${response.orderSentCounter}`
+          } successfuly. Total orders sent: ${response.orderSentCounter}. time (hr): %ds %dms'`,
+          orderSendEnd[0],
+          orderSendEnd[1] / 1000000
         )
         processOrderQueue()
       })
