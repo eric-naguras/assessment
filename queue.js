@@ -5,19 +5,19 @@ and always consistent Queue like AWSS SQS or RabbitMQ.
 */
 
 function Queue() {
-  this.items = [];
+  this.items = []
 }
 
 Queue.prototype.enqueue = function (e) {
-  this.items.push(e);
-};
+  this.items.push(e)
+}
 
 Queue.prototype.dequeue = function (e) {
-  return this.items.shift();
-};
+  return this.items.shift()
+}
 
 Queue.prototype.length = function () {
-  return this.items.length;
-};
+  return this.items.length
+}
 
-export { Queue };
+export { Queue }
