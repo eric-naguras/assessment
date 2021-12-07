@@ -52,13 +52,13 @@ const processOrderQueue = () => {
         // This is just for timing purposes
         if (response.orderSentCounter === 3000) {
           const hrend = process.hrtime(hrstart)
-          console.info('Execution time (hr): %ds %dms', hrend[0], hrend[1] / 1000000)
+          console.info('Execution time: %ds %dms', hrend[0], hrend[1] / 1000000)
         }
 
         console.log(
           `${ordersToBeProcessed.length()} Queue handler sent order ${
             response.orderKey
-          } successfuly. Total orders sent: ${response.orderSentCounter}. time (hr): %ds %dms'`,
+          } successfuly. Total orders sent: ${response.orderSentCounter}. time: %ds %dms'`,
           orderSendEnd[0],
           orderSendEnd[1] / 1000000
         )
