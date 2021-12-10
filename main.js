@@ -1,110 +1,85 @@
 import path from 'path'
 import fs from 'fs'
-import { readFile } from './fileReader.js'
 import { Queue } from './queue.js'
-import { sendOrder } from './orderSender.js'
-const orderFilesPath = path.resolve('./files-source')
-const newQueuesInterval = 250 // time in ms
-const fileReadInterval = 30000 // time in ms
-let hrstart
-
+import { FileReader } from './FileReader.js'
+import { QueueProcessor } from './QueueProcessor.js'
+import EventEmitter from 'events'
+const sourcePath = path.resolve('./files-source')
+const errorFilesPath = path.resolve('./errored-files')
+const processedFilesPath = path.resolve('./done')
+const MAX_FILES_TO_READ = 50
+const MAX_QUEUE_PROCESSORS = 3000
+const filesToBeProcessedQueue = new Queue()
 const ordersToBeProcessed = new Queue()
+let hrstart,
+  orderSentCounter = 0,
+  queueProcessorsCreated = false
 
-// Get corrected order files from directory
-const getOrderFiles = (files) => {
-  const promises = files.map((file) => readAFile(path.join(orderFilesPath, file)))
-  return Promise.all(promises)
-}
-
-const readAFile = (file) => {
+const readDirectory = (sourcePath, filesQueue) => {
   return new Promise((resolve, reject) => {
-    readFile(file)
-      .then((orders) => {
-        console.log(`Got ${orders.length} from ${file}`)
-        // Add orders to queue
-        for (const order of orders) {
-          ordersToBeProcessed.enqueue(order)
-        }
-        // Move file to other directory
-        const dest = file.replace('files-source', 'done')
-        fs.renameSync(file, dest)
-        return resolve()
-      })
-      .catch((ex) => {
-        console.error(`Error reading ${file}: ${ex}`)
-        return reject(ex.message)
-      })
-  })
-}
-
-const processOrderQueue = () => {
-  // Get order from Queue
-  const order = ordersToBeProcessed.dequeue()
-  if (order) {
-    // Remove the OrderKey as the order endpoint will not accept it
-    const orderKey = order.Key
-    delete order.Key
-    // Send the order to the endpoint without waiting for a response
-    let orderSendStart = process.hrtime()
-    sendOrder(order, orderKey)
-      .then((response) => {
-        const orderSendEnd = process.hrtime(orderSendStart)
-        // This is just for timing purposes
-        if (response.orderSentCounter === 3000) {
-          const hrend = process.hrtime(hrstart)
-          console.info('Execution time: %ds %dms', hrend[0], hrend[1] / 1000000)
-        }
-
-        console.log(
-          `${ordersToBeProcessed.length()} Queue handler sent order ${
-            response.orderKey
-          } successfuly. Total orders sent: ${response.orderSentCounter}. time: %ds %dms'`,
-          orderSendEnd[0],
-          orderSendEnd[1] / 1000000
-        )
-        processOrderQueue()
-      })
-      .catch((ex) => {
-        console.log(`Queue handler has error sending order ${orderKey}, re-adding to queue ${ex}`)
-        // Order sending failed, re-add order to queue
-        order.Key = orderKey
-        ordersToBeProcessed.enqueue(order)
-        processOrderQueue()
-      })
-  }
-}
-
-const readDirectory = () => {
-  fs.readdir(orderFilesPath, (err, files) => {
-    if (err) {
-      console.log(`Error reading ${orderFilesPath}: ${err.message}`)
-    }
-    if (files) {
-      // Maybe don't use too many files each step, might lead to overflows
-      const filesToProcess = files.filter((f) => f.includes('Corrected-')).splice(0, 5)
-      if (filesToProcess.length > 0) {
-        getOrderFiles(filesToProcess)
+    fs.readdir(sourcePath, (err, files) => {
+      if (err) {
+        return reject(`Error reading ${sourcePath}: ${ex.message}`)
       }
-    }
+      // Filter files to only include the correct files types
+      const filesToProcess = files.filter((f) => f.includes('Corrected-'))
+      // Add the files to the filesQueue
+      filesToProcess.forEach((file) => {
+        filesQueue.enqueue(file)
+      })
+      return resolve(files.length)
+    })
   })
-  setTimeout(() => {
-    readDirectory()
-  }, fileReadInterval)
+}
+
+const sendOrder = (order, orderKey) => {
+  return new Promise((resolve, reject) => {
+    const failed = Math.floor(Math.random() * 50 + 1) === 25
+    setTimeout(() => {
+      if (failed) {
+        return reject('Send order rejected with status 500')
+      }
+      orderSentCounter++
+      return resolve({ orderKey, orderSentCounter })
+    }, 1000)
+  })
 }
 
 const start = () => {
-  hrstart = process.hrtime()
-  // Create a number of queue handlers
-  setInterval(() => {
-    // No need to add handlers if queue is empty
-    if (ordersToBeProcessed.length() > 0) {
-      // Create 3 handlers
-      processOrderQueue()
-      processOrderQueue()
-      processOrderQueue()
+  const eventEmitter = new EventEmitter()
+  async function process() {
+    // Read the source directory and add found files to filesQueue
+    const NrOfFilesRead = await readDirectory(sourcePath, filesToBeProcessedQueue).catch((ex) =>
+      console.log(ex)
+    )
+    NrOfFilesRead ? console.log(`Read ${NrOfFilesRead} files`) : 0
+    // Create as many fileReaders as needed, up to the max allowed
+    // FileReaders only read a single file, when done will be disposed by garbage collector
+    const maxFileReaders = NrOfFilesRead > MAX_FILES_TO_READ ? MAX_FILES_TO_READ : NrOfFilesRead
+    for (let index = 0; index < maxFileReaders; index++) {
+      new FileReader(
+        sourcePath,
+        errorFilesPath,
+        processedFilesPath,
+        filesToBeProcessedQueue,
+        ordersToBeProcessed
+      )
     }
-  }, newQueuesInterval)
-  readDirectory()
+    // Only create queue processors if there is a need and if they have not created yet
+    if (NrOfFilesRead && !queueProcessorsCreated) {
+      queueProcessorsCreated = true
+      eventEmitter.setMaxListeners(MAX_QUEUE_PROCESSORS)
+      // Create queue processors, up to the max allowed
+      for (let index = 0; index < MAX_QUEUE_PROCESSORS; index++) {
+        new QueueProcessor(ordersToBeProcessed, sendOrder, hrstart, eventEmitter)
+      }
+    }
+    eventEmitter.emit('process')
+  }
+  // Skip the first interval waiting period
+  process()
+  setInterval(process, 500)
 }
 
+hrstart = process.hrtime()
 start()
